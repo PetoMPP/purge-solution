@@ -1,6 +1,9 @@
 use anyhow::{anyhow, Error};
 use clap::Parser;
+use git::GitCommand;
 use std::path::PathBuf;
+
+mod git;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -11,7 +14,8 @@ struct Args {
     nuget: bool,
 }
 
-fn main() -> Result<(), Error> {
+#[tokio::main]
+async fn main() -> Result<(), Error> {
     let Args { path, nuget } = Args::parse();
     if !path.exists() {
         return Err(anyhow!("{} does not exist", path.display()));
@@ -21,5 +25,7 @@ fn main() -> Result<(), Error> {
         return Err(anyhow!("{} is not a directory", path.display()));
     }
 
+    let o = GitCommand::version().exec().await?;
+    println!("{}", String::from_utf8_lossy(&o.stdout));
     Ok(())
 }
