@@ -12,9 +12,21 @@ pub struct CleanerResult {
     pub files: usize,
 }
 
+impl std::ops::AddAssign for CleanerResult {
+    fn add_assign(&mut self, rhs: Self) {
+        self.directories += rhs.directories;
+        self.files += rhs.files;
+    }
+}
+
 impl Cleaner {
     pub async fn clean(&self) -> Result<CleanerResult, Error> {
-        Ok(Self::clean_bin_obj(PathBuf::from("."), CleanerResult::default()).await)
+        let mut result = Self::clean_bin_obj(PathBuf::from("."), CleanerResult::default()).await;
+        if self.nuget {
+            result += Self::clean_nuget().await;
+        }
+
+        Ok(result)
     }
 
     fn clean_bin_obj(
@@ -24,7 +36,7 @@ impl Cleaner {
         Box::pin(async move {
             let mut result = result;
             let Ok(mut entries) = tokio::fs::read_dir(&path).await else {
-                println!("Unable to read {:?}", path);
+                eprintln!("Unable to read {:?}", path);
                 return result;
             };
             while let Ok(Some(entry)) = entries.next_entry().await {
@@ -33,7 +45,6 @@ impl Cleaner {
                     continue;
                 }
                 if path.ends_with("bin") || path.ends_with("obj") {
-                    println!("Cleaning {:?}", path);
                     result.files += Self::delete_files(path.clone()).await;
                     if let Ok(()) = tokio::fs::remove_dir(path).await {
                         result.directories += 1;
@@ -47,11 +58,41 @@ impl Cleaner {
         })
     }
 
+    async fn clean_nuget() -> CleanerResult {
+        let paths = vec![
+            PathBuf::from(std::env::var("USERPROFILE").unwrap())
+                .join(".nuget")
+                .join("packages"),
+            PathBuf::from(std::env::var("LOCALAPPDATA").unwrap())
+                .join("NuGet")
+                .join("Cache"),
+            PathBuf::from(std::env::var("LOCALAPPDATA").unwrap())
+                .join("NuGet")
+                .join("v3-cache"),
+            PathBuf::from(std::env::var("LOCALAPPDATA").unwrap())
+                .join("NuGet")
+                .join("plugins-cache"),
+            PathBuf::from(std::env::var("COMMONPROGRAMFILES(X86)").unwrap())
+                .join("Microsoft SDKs")
+                .join("NuGetPackages"),
+        ];
+
+        let mut result = CleanerResult::default();
+        for path in paths {
+            result.files += Self::delete_files(path.clone()).await;
+            if let Ok(()) = tokio::fs::remove_dir(path).await {
+                result.directories += 1;
+            }
+        }
+
+        result
+    }
+
     fn delete_files(path: PathBuf) -> Pin<Box<dyn Future<Output = usize>>> {
         Box::pin(async move {
             let mut files = 0;
             let Ok(mut entries) = tokio::fs::read_dir(&path).await else {
-                println!("Unable to read {:?}", &path);
+                eprintln!("Unable to read {:?}", &path);
                 return files;
             };
             while let Ok(Some(entry)) = entries.next_entry().await {
@@ -64,7 +105,7 @@ impl Cleaner {
 
                 match tokio::fs::remove_file(&path).await {
                     Ok(_) => files += 1,
-                    Err(e) => println!("Unable to delete {:?}: {}", path, e),
+                    Err(e) => eprintln!("Unable to delete {:?}: {}", path, e),
                 }
             }
 
