@@ -36,7 +36,7 @@ impl GitService {
 
     pub async fn pop_stash(&self) -> Result<(), Error> {
         let Some(stash_name) = &self.stash_name else {
-            return Err(anyhow!("No stash was saved!"));
+            return Ok(());
         };
         let stash_idx =
             String::from_utf8_lossy(&GitCommand::new("stash list").exec().await?.stdout)

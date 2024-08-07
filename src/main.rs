@@ -1,8 +1,10 @@
 use anyhow::{anyhow, Error};
 use clap::Parser;
-use git::{GitCommand, GitService};
+use cleaner::{Cleaner, CleanerResult};
+use git::GitService;
 use std::path::PathBuf;
 
+mod cleaner;
 mod git;
 
 #[derive(Parser, Debug)]
@@ -25,6 +27,7 @@ async fn main() -> Result<(), Error> {
         return Err(anyhow!("{} is not a directory", path.display()));
     }
 
+    let start = std::time::Instant::now();
     std::env::set_current_dir(&path)?;
     let mut git = GitService::new().await;
     if let Some(git) = &mut git {
@@ -37,7 +40,9 @@ async fn main() -> Result<(), Error> {
         }
     }
 
-    // do stuff
+    let cleaner = Cleaner { nuget };
+    let CleanerResult { directories, files } = cleaner.clean().await?;
+    println!("Cleaned {} directories and {} files in {:?}.", directories, files, start.elapsed());
 
     if let Some(git) = &git {
         git.reset_working_directory().await?;
