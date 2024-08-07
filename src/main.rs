@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Error};
 use clap::Parser;
-use git::GitCommand;
+use git::{GitCommand, GitService};
 use std::path::PathBuf;
 
 mod git;
@@ -25,7 +25,25 @@ async fn main() -> Result<(), Error> {
         return Err(anyhow!("{} is not a directory", path.display()));
     }
 
-    let o = GitCommand::version().exec().await?;
-    println!("{}", String::from_utf8_lossy(&o.stdout));
+    std::env::set_current_dir(&path)?;
+    let mut git = GitService::new().await;
+    if let Some(git) = &mut git {
+        match git.status().await?.len() {
+            0 => println!("No changes found"),
+            c => {
+                git.create_stash().await?;
+                println!("Stashed {} changes.", c);
+            }
+        }
+    }
+
+    // do stuff
+
+    if let Some(git) = &git {
+        git.reset_working_directory().await?;
+        git.pop_stash().await?;
+        println!("Changes restored.");
+    }
+
     Ok(())
 }
