@@ -1,7 +1,8 @@
 use anyhow::{anyhow, Error};
 use clap::Parser;
-use cleaner::{Cleaner, CleanerResult};
+use cleaner::Cleaner;
 use git::GitService;
+use indicatif::MultiProgress;
 use std::path::PathBuf;
 
 mod cleaner;
@@ -27,28 +28,19 @@ async fn main() -> Result<(), Error> {
         return Err(anyhow!("{} is not a directory", path.display()));
     }
 
+    let multibar = MultiProgress::new();
+    let gitbar = multibar.add(indicatif::ProgressBar::new_spinner());
+    let cleanbar = multibar.add(indicatif::ProgressBar::new_spinner());
+
     let start = std::time::Instant::now();
     std::env::set_current_dir(&path)?;
-    let mut git = GitService::new().await;
-    if let Some(git) = &mut git {
-        match git.status().await?.len() {
-            0 => println!("No changes found"),
-            c => {
-                git.create_stash().await?;
-                println!("Stashed {} changes.", c);
-            }
-        }
-    }
+    let mut git = GitService::new(gitbar.clone()).await;
+    git.save_working_dir().await?;
 
-    let cleaner = Cleaner { nuget };
-    let CleanerResult { directories, files } = cleaner.clean().await?;
-    println!("Cleaned {} directories and {} files in {:?}.", directories, files, start.elapsed());
+    let mut cleaner = Cleaner::new(nuget, cleanbar.clone());
+    cleaner.clean(start).await?;
 
-    if let Some(git) = &git {
-        git.reset_working_directory().await?;
-        git.pop_stash().await?;
-        println!("Changes restored.");
-    }
+    git.restore_working_dir().await?;
 
     Ok(())
 }

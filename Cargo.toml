@@ -7,5 +7,6 @@ edition = "2021"
 anyhow = "1.0.86"
 clap = { version = "4.5.13", features = ["derive"] }
 console = "0.15.8"
+indicatif = { version = "0.17.8", features = ["tokio"] }
 rand = "0.8.5"
 tokio = { version = "1.39.2", features = ["full"] }
