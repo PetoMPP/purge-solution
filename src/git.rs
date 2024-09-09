@@ -51,6 +51,7 @@ impl GitService {
             return Ok(());
         }
         let Some(stash_name) = &self.stash_name else {
+            self.reset_working_directory().await?;
             return Ok(());
         };
         let Some(stash_idx) =
