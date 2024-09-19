@@ -1,12 +1,16 @@
+use crate::command::Command;
 use anyhow::Error;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::{process::Output, time::Duration};
-use tokio::process::Command;
+use std::time::Duration;
 
 pub struct GitService {
     stash_name: Option<String>,
     progress: ProgressBar,
     available: bool,
+}
+
+impl Command for GitService {
+    const CMD: &'static str = "git";
 }
 
 impl GitService {
@@ -54,11 +58,10 @@ impl GitService {
             self.reset_working_directory().await?;
             return Ok(());
         };
-        let Some(stash_idx) =
-            String::from_utf8_lossy(&GitCommand::new("stash list").exec().await?.stdout)
-                .to_string()
-                .lines()
-                .position(|l| l.contains(stash_name))
+        let Some(stash_idx) = Self::exec("stash list")
+            .await?
+            .lines()
+            .position(|l| l.contains(stash_name))
         else {
             self.progress
                 .set_style(ProgressStyle::with_template("⚠️ Git: {msg}").unwrap());
@@ -68,9 +71,7 @@ impl GitService {
 
         self.reset_working_directory().await?;
 
-        GitCommand::new(format!("stash pop --index {stash_idx}").as_str())
-            .exec()
-            .await?;
+        Self::exec(format!("stash pop --index {stash_idx}").as_str()).await?;
 
         self.progress
             .set_style(ProgressStyle::with_template("✔️ Git: {msg}").unwrap());
@@ -80,14 +81,12 @@ impl GitService {
     }
 
     async fn version() -> Result<String, Error> {
-        Ok(String::from_utf8_lossy(&GitCommand::new("version").exec().await?.stdout).to_string())
+        Self::exec("version").await
     }
 
     async fn create_stash(&mut self) -> Result<(), Error> {
         let name = rand::random::<u32>().to_string();
-        GitCommand::new(format!("stash -u -m {name}").as_str())
-            .exec()
-            .await?;
+        Self::exec(format!("stash -u -m {name}").as_str()).await?;
         self.stash_name = Some(name);
         Ok(())
     }
@@ -96,35 +95,15 @@ impl GitService {
         if !self.available {
             return Ok(());
         }
-        GitCommand::new("reset --hard").exec().await?;
+        Self::exec("reset --hard").await?;
         Ok(())
     }
 
     async fn status(&self) -> Result<Vec<String>, Error> {
-        Ok(
-            String::from_utf8_lossy(&GitCommand::new("status -s").exec().await?.stdout)
-                .to_string()
-                .lines()
-                .map(|l| l.to_string())
-                .collect(),
-        )
-    }
-}
-
-pub struct GitCommand {
-    command: Command,
-}
-
-impl GitCommand {
-    pub fn new(cmd: &str) -> Self {
-        let mut command = Command::new("git");
-        command.args(cmd.split_whitespace());
-        command.stdout(std::process::Stdio::piped());
-        command.stderr(std::process::Stdio::piped());
-        Self { command }
-    }
-
-    pub async fn exec(&mut self) -> Result<Output, Error> {
-        Ok(self.command.spawn()?.wait_with_output().await?)
+        Ok(Self::exec("status -s")
+            .await?
+            .lines()
+            .map(|l| l.to_string())
+            .collect())
     }
 }

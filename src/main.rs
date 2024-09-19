@@ -6,6 +6,7 @@ use indicatif::MultiProgress;
 use std::path::PathBuf;
 
 mod cleaner;
+mod command;
 mod git;
 
 #[derive(Parser, Debug)]
