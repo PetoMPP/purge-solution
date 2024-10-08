@@ -2,9 +2,10 @@ use anyhow::Error;
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{future::Future, path::PathBuf, pin::Pin, time::Duration};
+use tokio::io::AsyncWriteExt;
 
 pub struct Cleaner {
-    pub nuget: bool,
+    pub nuget_patterns: Option<Vec<String>>,
     result: CleanerResult,
     progress: ProgressBar,
 }
@@ -23,12 +24,12 @@ impl std::ops::AddAssign for CleanerResult {
 }
 
 impl Cleaner {
-    pub fn new(nuget: bool, progress: ProgressBar) -> Self {
+    pub fn new(nuget_patterns: Option<Vec<String>>, progress: ProgressBar) -> Self {
         progress.set_style(ProgressStyle::with_template("{spinner} Cleaning: {msg}").unwrap());
         progress.enable_steady_tick(Duration::from_millis(100));
 
         Self {
-            nuget,
+            nuget_patterns,
             result: CleanerResult::default(),
             progress,
         }
@@ -41,11 +42,12 @@ impl Cleaner {
             self.progress.clone(),
         )
         .await;
-        if self.nuget {
-            self.result += Self::clean_nuget(self.progress.clone()).await;
+        if let Some(patterns) = self.nuget_patterns.clone() {
+            self.result += Self::clean_nuget(patterns, self.progress.clone()).await;
         }
 
-        self.progress.set_style(ProgressStyle::with_template("✔️ Cleaning: {msg}").unwrap());
+        self.progress
+            .set_style(ProgressStyle::with_template("✔️ Cleaning: {msg}").unwrap());
 
         self.progress.finish_with_message(format!(
             "Cleaned {} directories and {} files in {:?}.",
@@ -73,12 +75,13 @@ impl Cleaner {
             };
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let path = entry.path();
-                if !path.is_dir() {
+                if !path.is_dir() || path.ends_with("packages") {
                     continue;
                 }
                 if path.ends_with("bin") || path.ends_with("obj") {
                     progress.set_message(format!("bin/obj ({:?})", path));
-                    result.files += Self::delete_files(path.clone(), progress.clone()).await;
+                    result.files +=
+                        Self::delete_files(path.clone(), Vec::new(), progress.clone()).await;
                     if let Ok(()) = tokio::fs::remove_dir(path).await {
                         result.directories += 1;
                     }
@@ -91,7 +94,7 @@ impl Cleaner {
         })
     }
 
-    async fn clean_nuget(progress: ProgressBar) -> CleanerResult {
+    async fn clean_nuget(patterns: Vec<String>, progress: ProgressBar) -> CleanerResult {
         let paths = vec![
             PathBuf::from(".").join("packages"),
             PathBuf::from(std::env::var("USERPROFILE").unwrap())
@@ -114,7 +117,8 @@ impl Cleaner {
         let mut result = CleanerResult::default();
         for path in paths {
             progress.set_message(format!("NuGet ({:?})", path));
-            result.files += Self::delete_files(path.clone(), progress.clone()).await;
+            result.files +=
+                Self::delete_files(path.clone(), patterns.clone(), progress.clone()).await;
             if let Ok(()) = tokio::fs::remove_dir(path).await {
                 result.directories += 1;
             }
@@ -123,7 +127,11 @@ impl Cleaner {
         result
     }
 
-    fn delete_files(path: PathBuf, progress: ProgressBar) -> Pin<Box<dyn Future<Output = usize>>> {
+    fn delete_files(
+        path: PathBuf,
+        patterns: Vec<String>,
+        progress: ProgressBar,
+    ) -> Pin<Box<dyn Future<Output = usize>>> {
         Box::pin(async move {
             let mut files = 0;
             let Ok(mut entries) = tokio::fs::read_dir(&path).await else {
@@ -135,14 +143,44 @@ impl Cleaner {
             };
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let path = entry.path();
+                let has_pattern = patterns.is_empty()
+                    || path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|n| patterns.iter().any(|p| n.contains(p)))
+                        .unwrap_or_default();
                 if path.is_dir() {
-                    files += Self::delete_files(path.clone(), progress.clone()).await;
+                    if !has_pattern {
+                        continue;
+                    }
+                    files +=
+                        Self::delete_files(path.clone(), patterns.clone(), progress.clone()).await;
                     _ = tokio::fs::remove_dir(path).await;
                     continue;
                 }
 
+                if !has_pattern && path.extension().and_then(|e| e.to_str()) == Some("dat") {
+                    continue;
+                }
+
                 match tokio::fs::remove_file(&path).await {
-                    Ok(_) => files += 1,
+                    Ok(_) => {
+                        if let Ok(mut file) = tokio::fs::OpenOptions::new()
+                            .write(true)
+                            .append(true)
+                            .create(true)
+                            .open("C:\\temp\\cleaner.log")
+                            .await
+                        {
+                            if files == 0 {
+                                _ = file.write(b"-------------------------\n").await;
+                            }
+                            _ = file
+                                .write(format!("removed: {}\n", path.display()).as_bytes())
+                                .await;
+                        }
+                        files += 1;
+                    }
                     Err(e) => progress.println(format!(
                         "{}: {}",
                         style(format!("❌ Unable to delete {:?}", path))
