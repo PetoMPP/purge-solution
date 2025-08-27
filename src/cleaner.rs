@@ -164,23 +164,7 @@ impl Cleaner {
                 }
 
                 match tokio::fs::remove_file(&path).await {
-                    Ok(_) => {
-                        if let Ok(mut file) = tokio::fs::OpenOptions::new()
-                            .write(true)
-                            .append(true)
-                            .create(true)
-                            .open("C:\\temp\\cleaner.log")
-                            .await
-                        {
-                            if files == 0 {
-                                _ = file.write(b"-------------------------\n").await;
-                            }
-                            _ = file
-                                .write(format!("removed: {}\n", path.display()).as_bytes())
-                                .await;
-                        }
-                        files += 1;
-                    }
+                    Ok(_) => files += 1,
                     Err(e) => progress.println(format!(
                         "{}: {}",
                         style(format!("❌ Unable to delete {:?}", path))
