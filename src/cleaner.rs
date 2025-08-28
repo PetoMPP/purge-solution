@@ -1,8 +1,7 @@
 use anyhow::Error;
 use console::style;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{HumanBytes, ProgressBar, ProgressStyle};
 use std::{future::Future, path::PathBuf, pin::Pin, time::Duration};
-use tokio::io::AsyncWriteExt;
 
 pub struct Cleaner {
     pub nuget_patterns: Option<Vec<String>>,
@@ -13,13 +12,26 @@ pub struct Cleaner {
 #[derive(Default, Clone, Copy)]
 struct CleanerResult {
     directories: usize,
-    files: usize,
+    files: FileCleanResult,
 }
 
 impl std::ops::AddAssign for CleanerResult {
     fn add_assign(&mut self, rhs: Self) {
         self.directories += rhs.directories;
         self.files += rhs.files;
+    }
+}
+
+#[derive(Default, Clone, Copy)]
+struct FileCleanResult {
+    count: usize,
+    size: u64,
+}
+
+impl std::ops::AddAssign for FileCleanResult {
+    fn add_assign(&mut self, rhs: Self) {
+        self.count += rhs.count;
+        self.size += rhs.size;
     }
 }
 
@@ -50,9 +62,10 @@ impl Cleaner {
             .set_style(ProgressStyle::with_template("✔️ Cleaning: {msg}").unwrap());
 
         self.progress.finish_with_message(format!(
-            "Cleaned {} directories and {} files in {:?}.",
+            "Cleaned {} directories and {} files ({}) in {:?}.",
             self.result.directories,
-            self.result.files,
+            self.result.files.count,
+            HumanBytes(self.result.files.size),
             start.elapsed()
         ));
 
@@ -131,9 +144,9 @@ impl Cleaner {
         path: PathBuf,
         patterns: Vec<String>,
         progress: ProgressBar,
-    ) -> Pin<Box<dyn Future<Output = usize>>> {
+    ) -> Pin<Box<dyn Future<Output = FileCleanResult>>> {
         Box::pin(async move {
-            let mut files = 0;
+            let mut files = FileCleanResult::default();
             let Ok(mut entries) = tokio::fs::read_dir(&path).await else {
                 progress.println(format!(
                     "{}",
@@ -163,9 +176,17 @@ impl Cleaner {
                     continue;
                 }
 
-                match tokio::fs::remove_file(&path).await {
-                    Ok(_) => files += 1,
-                    Err(e) => progress.println(format!(
+                match (
+                    tokio::fs::metadata(&path).await,
+                    tokio::fs::remove_file(&path).await,
+                ) {
+                    (m, Ok(_)) => {
+                        files.count += 1;
+                        if let Ok(m) = m {
+                            files.size += m.len();
+                        }
+                    }
+                    (Err(e), _) | (_, Err(e)) => progress.println(format!(
                         "{}: {}",
                         style(format!("❌ Unable to delete {:?}", path))
                             .red()
